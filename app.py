@@ -812,6 +812,8 @@ class CommunalBot:
             await query.edit_message_text("Доступ закрыт. Попросите администратора добавить вас.")
             return
         data = query.data or ""
+
+        # Общие действия (доступны всем)
         if data == "cancel":
             self.clear_flow(context)
             await query.edit_message_text("Действие отменено.")
@@ -827,69 +829,82 @@ class CommunalBot:
             await query.edit_message_text("Главное меню:")
             await self.show_home(update, user)
             return
-        if data in {"tenant:history", "tenant:tariffs"}:
-            flat_id = int(user["flat_id"]) if user["flat_id"] else None
-            if flat_id is None:
-                await query.edit_message_text(
-                    "Квартира ещё не назначена.", reply_markup=tenant_menu()
-                )
-                return
-            if data == "tenant:history":
-                text = self.tenant_history_text(flat_id)
-            else:
-                text = self.tenant_tariff_text(flat_id)
-            await query.edit_message_text(text, reply_markup=tenant_menu())
-            return
-        if data == "audit":
-            flat_id = int(user["flat_id"]) if user["flat_id"] else None
-            if flat_id is None:
-                await query.edit_message_text("Квартира ещё не назначена.")
-                return
-            entries = self.db.audit_entries(flat_id)
-            text = "\n".join(
-                f"{row['actor_name']}: {row['details']}" for row in entries
-            ) or "Изменений по квартире пока нет."
-            await query.edit_message_text(text, reply_markup=tenant_menu())
-            return
+
+        # Действия для квартиранта
         if user["role"] != "admin":
+            if data == "tenant:history":
+                flat_id = user["flat_id"]
+                if flat_id is None:
+                    await query.edit_message_text("Квартира ещё не назначена.", reply_markup=tenant_menu())
+                    return
+                text = self.tenant_history_text(flat_id)
+                await query.edit_message_text(text, reply_markup=tenant_menu())
+                return
+            if data == "tenant:tariffs":
+                flat_id = user["flat_id"]
+                if flat_id is None:
+                    await query.edit_message_text("Квартира ещё не назначена.", reply_markup=tenant_menu())
+                    return
+                text = self.tenant_tariff_text(flat_id)
+                await query.edit_message_text(text, reply_markup=tenant_menu())
+                return
+            if data == "audit":
+                flat_id = user["flat_id"]
+                if flat_id is None:
+                    await query.edit_message_text("Квартира ещё не назначена.", reply_markup=tenant_menu())
+                    return
+                entries = self.db.audit_entries(flat_id)
+                text = "\n".join(
+                    f"{row['actor_name']}: {row['details']}" for row in entries
+                ) or "Изменений по вашей квартире пока нет."
+                await query.edit_message_text(text, reply_markup=tenant_menu())
+                return
             await query.edit_message_text("Эта кнопка доступна только администратору.")
             return
-        flat_id = await self.selected_flat_or_prompt(update, user["user_id"])
+
+        # --- Действия для администратора ---
+        # Сначала обрабатываем те, которые не требуют выбранной квартиры
         if data == "flats":
-            await query.edit_message_text(
-                "\n".join(
-                    [f"№{row['id']} — {row['name']}" for row in self.db.flats()]
-                )
-                or "Квартир пока нет.",
-                reply_markup=admin_menu(),
-            )
+            flats = self.db.flats()
+            text = "\n".join(
+                [f"№{row['id']} — {row['name']}" for row in flats]
+            ) or "Квартир пока нет."
+            await query.edit_message_text(text, reply_markup=admin_menu())
             return
+
         if data == "users":
-            users = self.db.users(flat_id) if flat_id else self.db.users()
+            # Если есть выбранная квартира, показываем пользователей только для неё, иначе всех
+            selected = self.selected_flat_id(user["user_id"])
+            users = self.db.users(selected) if selected else self.db.users()
             text = "\n".join(
                 f"{row['user_id']} — {row['role']} — квартира №{row['flat_id']}"
                 for row in users
             ) or "Пользователей пока нет."
             await query.edit_message_text(text, reply_markup=admin_menu())
             return
-        if data == "invite":
-            if flat_id is None:
-                return
-            await self.send_invite(update, context, flat_id, user["user_id"])
-            return
+
+        # Для остальных действий нужна выбранная квартира
+        flat_id = await self.selected_flat_or_prompt(update, user["user_id"])
         if flat_id is None:
             return
+
+        if data == "invite":
+            await self.send_invite(update, context, flat_id, user["user_id"])
+            return
+
         if data == "tariffs":
             await query.edit_message_text(
                 self.admin_summary(flat_id), reply_markup=tariff_keyboard()
             )
             return
+
         if data == "initial":
             await query.edit_message_text(
                 "Выберите счётчик для начального показания:",
                 reply_markup=initial_keyboard(),
             )
             return
+
         if data in {"uk", "caprepair"}:
             if data == "uk":
                 self.set_pending(context, "uk")
@@ -901,6 +916,7 @@ class CommunalBot:
                 )
             await query.edit_message_text(prompt, reply_markup=cancel_keyboard())
             return
+
         if data == "history":
             rows = self.db.readings(flat_id)
             text = "\n".join(
@@ -909,13 +925,15 @@ class CommunalBot:
             ) or "История расчётов пока пуста."
             await query.edit_message_text(text, reply_markup=admin_menu())
             return
+
         if data == "audit":
             entries = self.db.audit_entries(flat_id)
             text = "\n".join(
                 f"{row['actor_name']}: {row['details']}" for row in entries
-            ) or "Журнал изменений пока пуст."
+            ) or "Журнал изменений по выбранной квартире пуст."
             await query.edit_message_text(text, reply_markup=admin_menu())
             return
+
         if data.startswith("initial:"):
             meter = data.split(":", 1)[1]
             self.set_pending(context, "initial", meter=meter)
@@ -924,6 +942,7 @@ class CommunalBot:
                 reply_markup=cancel_keyboard(),
             )
             return
+
         if data.startswith("tariff:"):
             meter = data.split(":", 1)[1]
             if meter == "caprepair":
@@ -939,6 +958,7 @@ class CommunalBot:
                 reply_markup=cancel_keyboard(),
             )
             return
+
         if data.startswith("pay:"):
             _, reading_id, service = data.split(":")
             paid = self.db.toggle_payment(int(reading_id), service)
@@ -957,11 +977,13 @@ class CommunalBot:
                     f"{service_name(service)}: {'оплачено' if paid else 'не оплачено'}"
                 )
             return
+
         if data.startswith("select:"):
             selected = int(data.split(":")[1])
             self.db.select_flat(user["user_id"], selected)
             await query.edit_message_text(self.admin_summary(selected), reply_markup=admin_menu())
             return
+
         if data.startswith("remove:confirm:"):
             target_id = int(data.rsplit(":", 1)[1])
             target = self.db.user(target_id)
