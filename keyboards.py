@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
+from .formatting import money, service_name  # добавлен импорт money
+
 
 def cancel_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
@@ -79,15 +81,28 @@ def tenant_menu() -> InlineKeyboardMarkup:
 
 
 def report_keyboard(reading_id: int, statuses: dict[str, object]) -> InlineKeyboardMarkup:
+    """
+    Создаёт клавиатуру для управления оплатой по каждой услуге.
+    Каждая кнопка содержит название услуги, сумму и текущий статус.
+    """
     services = ("water", "electricity", "gas", "tko", "uk", "caprepair")
     rows = []
     for service in services:
-        paid = bool(statuses.get(service)["paid"]) if service in statuses else False
+        # Если статус отсутствует, считаем неоплаченным с нулевой суммой
+        if service in statuses:
+            paid = bool(statuses[service]["paid"])
+            amount = float(statuses[service]["amount"])
+        else:
+            paid = False
+            amount = 0.0
+
         label = "✔ Оплачено" if paid else "Оплатить"
+        # Формируем подпись: "Вода: 150.00 руб. □ Оплатить"
+        button_text = f"{service_name(service)}: {money(amount)} руб. {'✓' if paid else '□'} {label}"
         rows.append(
             [
                 InlineKeyboardButton(
-                    f"{'✓' if paid else '□'} {label}",
+                    button_text,
                     callback_data=f"pay:{reading_id}:{service}",
                 )
             ]
